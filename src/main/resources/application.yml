@@ -1,0 +1,10 @@
+CONNECTION_STRING: fake connection string
+ENDPOINT: https://azwepersonal0001.blob.core.windows.net/album
+
+spring:
+  cloud:
+    azure:
+      storage:
+        account-name: azwepersonal0001
+        account-key: ${AZ_STORAGE_ACCOUNT_KEY}
+
