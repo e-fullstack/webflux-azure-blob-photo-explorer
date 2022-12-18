@@ -9,12 +9,24 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.MediaType;
 import org.springframework.http.codec.multipart.FilePart;
+import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.reactive.function.BodyExtractor;
+import org.springframework.web.reactive.function.BodyExtractors;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.RouterFunctions;
+import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import java.nio.file.Path;
+import java.util.Collections;
 
 import static org.springframework.web.reactive.function.server.ServerResponse.ok;
 
@@ -27,6 +39,7 @@ public class ExplorerApplication {
 }
 
 @Configuration
+@Slf4j
 @RequiredArgsConstructor
 class Routers {
 	private final Services services;
@@ -51,16 +64,32 @@ class Routers {
 				})
 				.POST("/album/{name}/uploadMany", request -> {
 					var albumName = request.pathVariable("name");
-					return request.multipartData().flatMap(stringPartMultiValueMap -> {
-						var stringPartMap= stringPartMultiValueMap.toSingleValueMap();
-						var filePart = (FilePart)stringPartMap.get("files");
-						return Mono.just(filePart.filename());
-					}).flatMap(v -> ok().body(Mono.just(v), String.class));
+					return request.multipartData()
+							.map(stringPartMultiValueMap -> stringPartMultiValueMap.get("files"))
+							.flatMapMany(Flux::fromIterable)
+							.cast(FilePart.class)
+							.flatMap(filePart -> {
+								log.info("{} file Processed", filePart.filename());
+								return services.upload(albumName, filePart.filename(), filePart.content());
+							}).then(ok().body(Mono.just("SUCCESS"), String.class));
 				})
 				.build();
 	}
 }
 
+@RestController
+@Slf4j
+@RequiredArgsConstructor
+class RestControllers {
+	private final Services services;
+	@PostMapping("/album/v2/{name}/uploadMany")
+	public Mono<Void> upload(@PathVariable("name") String name, @RequestPart("files") Flux<FilePart> partFlux) {
+		return partFlux
+				.doOnNext(fp -> log.info("FileName {}", fp.filename()))
+				.flatMap(fp -> services.upload(name, fp.filename(), fp.content()))
+				.then();
+	}
+}
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -78,13 +107,14 @@ class Services {
 
 	public Mono<String> upload(String albumName, String fileName, Flux<DataBuffer> content) {
 		//FluxUtil.toFluxByteBuffer(new ByteArrayInputStream(content)) if content is byte[]
-
+		log.info("service::upload albumName {} , fileName {}", albumName, fileName);
 		return blobServiceAsyncClient
 				.getBlobContainerAsyncClient(albumName)
 				.getBlobAsyncClient(fileName)
-				.upload(content.map(DataBuffer::toByteBuffer), new ParallelTransferOptions().setBlockSizeLong(2 * 1024L * 1024L).setMaxConcurrency(5))
+				.upload(content.map(DataBuffer::toByteBuffer), new ParallelTransferOptions().setBlockSizeLong(2 * 1024L * 1024L).setMaxConcurrency(5), true)
 				.doOnError(e -> log.error("Upload ERROR {}", e.getMessage()))
 				.doOnSuccess(r -> log.info("Upload SUCCESS {}", r.getVersionId()))
-				.flatMap(blockBlobItem -> Mono.just("DONE"));
+				.flatMap(blockBlobItem -> Mono.just("DONE"))
+				.onErrorResume(e -> Mono.error(e));
 	}
 }

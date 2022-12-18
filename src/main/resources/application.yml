@@ -7,4 +7,6 @@ spring:
       storage:
         account-name: azwepersonal0001
         account-key: ${AZ_STORAGE_ACCOUNT_KEY}
-
+server:
+  error:
+    include-message: always
