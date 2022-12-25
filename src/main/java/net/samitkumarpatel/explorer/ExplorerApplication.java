@@ -1,8 +1,9 @@
 package net.samitkumarpatel.explorer;
 
+import com.azure.core.http.rest.PagedFlux;
 import com.azure.storage.blob.BlobServiceAsyncClient;
 import com.azure.storage.blob.models.ParallelTransferOptions;
-import lombok.RequiredArgsConstructor;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -21,13 +22,18 @@ import org.springframework.web.reactive.function.BodyExtractor;
 import org.springframework.web.reactive.function.BodyExtractors;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.RouterFunctions;
+import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.file.Path;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.List;
+import java.util.regex.Pattern;
 
+import static org.springframework.web.reactive.function.server.ServerResponse.badRequest;
 import static org.springframework.web.reactive.function.server.ServerResponse.ok;
 
 @SpringBootApplication
@@ -42,37 +48,20 @@ public class ExplorerApplication {
 @Slf4j
 @RequiredArgsConstructor
 class Routers {
-	private final Services services;
 	@Bean
-	public RouterFunction route() {
+	public RouterFunction route(Handlers handlers) {
 		return RouterFunctions.route()
-				.GET("/album", request -> ok().body("", String.class))
-				.PUT("/album", request -> ok().body("", String.class))
-				.POST("/album", request -> {
-					var name = request.queryParam("name").orElse("default");
-					return ok().body(services.albumCreate(name), String.class);
-				})
-				.POST("/album/{name}/uploadOne", request -> {
-					var albumName = request.pathVariable("name");
-					return request.multipartData()
-							.flatMap(stringPartMultiValueMap -> {
-								// This will just support one attachment, If need more this need to be extend
-								var stringPartMap= stringPartMultiValueMap.toSingleValueMap();
-								var filePart = (FilePart) stringPartMap.get("file");
-								return services.upload(albumName, filePart.filename(), filePart.content());
-							}).then(ok().body(Mono.just("Uploaded"), String.class));
-				})
-				.POST("/album/{name}/uploadMany", request -> {
-					var albumName = request.pathVariable("name");
-					return request.multipartData()
-							.map(stringPartMultiValueMap -> stringPartMultiValueMap.get("files"))
-							.flatMapMany(Flux::fromIterable)
-							.cast(FilePart.class)
-							.flatMap(filePart -> {
-								log.info("{} file Processed", filePart.filename());
-								return services.upload(albumName, filePart.filename(), filePart.content());
-							}).then(ok().body(Mono.just("SUCCESS"), String.class));
-				})
+				.path("/album", builder -> builder
+						.GET("", handlers::albumAll)
+						.POST("", handlers::createAlbum)
+						.PUT("", request -> ok().body("", String.class))
+						.DELETE("", request -> ok().body("", String.class))
+						.path("/{name}/photo", builder1 -> builder1
+								.GET("", handlers::albumContent)
+								.POST("/upload", handlers::uploadOne)
+								.POST("/upload-many", handlers::uploadMany)
+						)
+				)
 				.build();
 	}
 }
@@ -82,12 +71,52 @@ class Routers {
 @RequiredArgsConstructor
 class RestControllers {
 	private final Services services;
-	@PostMapping("/album/v2/{name}/uploadMany")
+	@PostMapping("v2/album/photo/{name}/upload-many")
 	public Mono<Void> upload(@PathVariable("name") String name, @RequestPart("files") Flux<FilePart> partFlux) {
 		return partFlux
 				.doOnNext(fp -> log.info("FileName {}", fp.filename()))
 				.flatMap(fp -> services.upload(name, fp.filename(), fp.content()))
 				.then();
+	}
+}
+
+@Configuration
+@Slf4j
+@RequiredArgsConstructor
+class Handlers {
+	private final Services services;
+
+	public Mono<ServerResponse> createAlbum(ServerRequest request) {
+		var name = request.queryParam("name").orElse("default");
+		return ok().body(services.albumCreate(name), String.class);
+	}
+	public Mono<ServerResponse> albumAll(ServerRequest request) {
+		return ok().body(services.albumAll(), List.class);
+	}
+
+	public Mono<ServerResponse> albumContent(ServerRequest request) {
+		return ok().body(services.albumContent(request.pathVariable("name")), List.class);
+	}
+	public Mono<ServerResponse> uploadOne(ServerRequest request) {
+		var albumName = request.pathVariable("name");
+		return request.multipartData()
+				.flatMap(stringPartMultiValueMap -> {
+					// This will just support one attachment, If need more this need to be extend
+					var stringPartMap= stringPartMultiValueMap.toSingleValueMap();
+					var filePart = (FilePart) stringPartMap.get("file");
+					return services.upload(albumName, filePart.filename(), filePart.content());
+				}).then(ok().body(Mono.just("Uploaded"), String.class));
+	}
+	public Mono<ServerResponse> uploadMany(ServerRequest request) {
+		var albumName = request.pathVariable("name");
+		return request.multipartData()
+				.map(stringPartMultiValueMap -> stringPartMultiValueMap.get("files"))
+				.flatMapMany(Flux::fromIterable)
+				.cast(FilePart.class)
+				.flatMap(filePart -> {
+					log.info("{} file Processed", filePart.filename());
+					return services.upload(albumName, filePart.filename(), filePart.content());
+				}).then(ok().body(Mono.just("SUCCESS"), String.class));
 	}
 }
 @Service
@@ -96,13 +125,27 @@ class RestControllers {
 class Services {
 	private final BlobServiceAsyncClient blobServiceAsyncClient;
 	public Mono<String> albumCreate(String name) {
-		var purifiedName = name.replaceAll("\\W", "-").replaceAll("_", "-");
+		var purifiedName = name.replaceAll("\\W", "-").replaceAll("[^a-zA-Z0-9>]", "-");
 		log.info("albumCreate Original name {} converted to Purified Name {}", name, purifiedName);
 		return blobServiceAsyncClient
 				.createBlobContainerIfNotExists(purifiedName)
 				.doOnError(e -> log.info("albumCreation ERROR {}", e.getMessage()))
 				.flatMap(blobContainerAsyncClient -> Mono.just("SUCCESS"))
 				.doOnSuccess(r -> log.info("albumCreation SUCCESS {}", purifiedName));
+	}
+
+	public Mono<List<Album>> albumAll() {
+		return blobServiceAsyncClient
+				.listBlobContainers()
+				.map(blobContainerItem -> Album.builder().name(blobContainerItem.getName()).lastModified(blobContainerItem.getProperties().getLastModified().format(DateTimeFormatter.ISO_LOCAL_DATE)).build())
+				.collectList();
+	}
+
+	public Mono<List<AlbumContent>> albumContent(String albumName) {
+		return blobServiceAsyncClient
+				.getBlobContainerAsyncClient(albumName)
+				.listBlobs()
+				.map(blobItem -> AlbumContent.builder().name(blobItem.getName()).lastModified(blobItem.getProperties().getLastModified().format(DateTimeFormatter.ISO_LOCAL_DATE)).size(blobItem.getProperties().getContentLength().toString()).build()).collectList();
 	}
 
 	public Mono<String> upload(String albumName, String fileName, Flux<DataBuffer> content) {
@@ -117,4 +160,23 @@ class Services {
 				.flatMap(blockBlobItem -> Mono.just("DONE"))
 				.onErrorResume(e -> Mono.error(e));
 	}
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+class Album {
+	private String name;
+	private String lastModified;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+class AlbumContent {
+	private String name;
+	private String lastModified;
+	private String size;
 }

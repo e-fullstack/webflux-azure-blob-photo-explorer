@@ -21,7 +21,7 @@ class UtilityTest {
 
 	@Test
 	void specialCharacterReplacementTest() {
-		var x = "India tour_2020".replaceAll("\\W", "-").replaceAll("_", "-");
+		var x = "India tour_2020".replaceAll("\\W", "-").replaceAll("[^a-zA-Z0-9>]", "-");
 		assertEquals("India-tour-2020", x);
 	}
 }
