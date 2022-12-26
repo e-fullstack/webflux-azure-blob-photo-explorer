@@ -2,6 +2,7 @@ package net.samitkumarpatel.explorer;
 
 import com.azure.core.http.rest.PagedFlux;
 import com.azure.storage.blob.BlobServiceAsyncClient;
+import com.azure.storage.blob.models.BlobContainerItem;
 import com.azure.storage.blob.models.ParallelTransferOptions;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +54,7 @@ class Routers {
 		return RouterFunctions.route()
 				.path("/album", builder -> builder
 						.GET("", handlers::albumAll)
+						.GET("/v2", handlers::albumAllV2)
 						.POST("", handlers::createAlbum)
 						.PUT("", request -> ok().body("", String.class))
 						.DELETE("", request -> ok().body("", String.class))
@@ -92,6 +94,10 @@ class Handlers {
 	}
 	public Mono<ServerResponse> albumAll(ServerRequest request) {
 		return ok().body(services.albumAll(), List.class);
+	}
+
+	public Mono<ServerResponse> albumAllV2(ServerRequest request) {
+		return ok().body(services.albumAllV2(), PagedFlux.class);
 	}
 
 	public Mono<ServerResponse> albumContent(ServerRequest request) {
@@ -141,6 +147,9 @@ class Services {
 				.collectList();
 	}
 
+	public PagedFlux<BlobContainerItem> albumAllV2() {
+		return blobServiceAsyncClient.listBlobContainers();
+	}
 	public Mono<List<AlbumContent>> albumContent(String albumName) {
 		return blobServiceAsyncClient
 				.getBlobContainerAsyncClient(albumName)

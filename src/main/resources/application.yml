@@ -2,6 +2,8 @@ CONNECTION_STRING: fake connection string
 ENDPOINT: https://azwepersonal0001.blob.core.windows.net/album
 
 spring:
+  codec:
+    max-in-memory-size: 10MB
   cloud:
     azure:
       storage:
