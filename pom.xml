@@ -9,10 +9,10 @@
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>net.samitkumarpatel</groupId>
-	<artifactId>photo-explorer-azure-blob</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name>photo-explorer-azure-blob</name>
-	<description>photo-explorer-azure-blob</description>
+	<artifactId>webflux-azure-blob-photo-explorer</artifactId>
+	<version>1.0.0-SNAPSHOT</version>
+	<name>webflux-azure-blob-photo-explorer</name>
+	<description>webflux-azure-blob-photo-explorer</description>
 	<properties>
 		<java.version>17</java.version>
 		<spring-cloud-azure.version>6.0.0-beta.4</spring-cloud-azure.version>
